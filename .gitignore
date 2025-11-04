@@ -1,0 +1,21 @@
+
+# Archivos compilados y binarios
+*.bin
+*.elf
+*.o
+
+# Carpetas de Build (si usas PlatformIO)
+.pio/
+.vscode/
+
+# Archivo de configuración local
+sdkconfig
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivo de secretos (¡IMPORTANTE!)
+# Si tienes un archivo con tus contraseñas,
+# llámalo "secrets.h" y no lo subas.
+secrets.h
