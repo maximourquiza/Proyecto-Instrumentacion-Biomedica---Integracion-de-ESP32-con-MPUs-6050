@@ -12,11 +12,9 @@
 
 MPU6050 mpu(Wire);
 
-float pitch = 0.0;  // Rotación en eje Y (inclinación adelante/atrás)
-float roll = 0.0;   // Rotación en eje X (inclinación lateral)
-float yaw = 0.0;    // Rotación en eje Z (giro horizontal)
-
-const float ALPHA = 0.95;
+// Variables para análisis de calidad del filtro
+float gyro_x_raw = 0, gyro_y_raw = 0, gyro_z_raw = 0;
+float accel_x_raw = 0, accel_y_raw = 0, accel_z_raw = 0;
 
 unsigned long timer = 0;
 
@@ -33,30 +31,69 @@ void setup() {
   delay(1000);
   mpu.calcOffsets(true,true); // gyro and accelero
   Serial.println("Done!\n");
-  
+
+  timer = millis();
 }
 
 void loop() {
 
   mpu.update();
 
-  if(millis() - timer > 1000){ // print data every second
-    Serial.print(F("TEMPERATURE: "));Serial.println(mpu.getTemp());
-    Serial.print(F("ACCELERO  X: "));Serial.print(mpu.getAccX());
-    Serial.print("\tY: ");Serial.print(mpu.getAccY());
-    Serial.print("\tZ: ");Serial.println(mpu.getAccZ());
+  float angleX = mpu.getAngleX();  // Roll - Inclinación lateral
+  float angleY = mpu.getAngleY();  // Pitch - Inclinación adelante/atrás
+  float angleZ = mpu.getAngleZ();  // Yaw - Rotación horizontal (deriva sin magnetómetro)
+
+  // Estos son valores RAW con offsets ya aplicados
+  float accelX = mpu.getAccX();  // Aceleración en X (en g's)
+  float accelY = mpu.getAccY();  // Aceleración en Y (en g's)
+  float accelZ = mpu.getAccZ();  // Aceleración en Z (en g's)
   
-    Serial.print(F("GYRO      X: "));Serial.print(mpu.getGyroX());
-    Serial.print("\tY: ");Serial.print(mpu.getGyroY());
-    Serial.print("\tZ: ");Serial.println(mpu.getGyroZ());
+  float gyroX = mpu.getGyroX();  // Velocidad angular en X (°/s)
+  float gyroY = mpu.getGyroY();  // Velocidad angular en Y (°/s)
+  float gyroZ = mpu.getGyroZ();  // Velocidad angular en Z (°/s)
+
+  // Detectar si el sensor está quieto o en movimiento
+  // Calculamos la magnitud del vector de aceleración
+  float accelMagnitude = sqrt(accelX*accelX + accelY*accelY + accelZ*accelZ);
+  bool enMovimiento = abs(accelMagnitude - 1.0) > 0.15;  // >0.15g de diferencia
   
-    Serial.print(F("ACC ANGLE X: "));Serial.print(mpu.getAccAngleX());
-    Serial.print("\tY: ");Serial.println(mpu.getAccAngleY());
+  // Detectar velocidades angulares significativas
+  float gyroMagnitude = sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
+  bool rotacionRapida = gyroMagnitude > 30.0;  // >30°/s
+
+  if(millis() - timer > 100){ // print data every second
+    // Ángulos filtrados
+    Serial.print(angleX, 2);
+    Serial.print("\t\t");
+    Serial.print(angleY, 2);
+    Serial.print("\t\t");
+    Serial.print(angleZ, 2);
+    Serial.print("\t| ");
     
-    Serial.print(F("ANGLE     X: "));Serial.print(mpu.getAngleX());
-    Serial.print("\tY: ");Serial.print(mpu.getAngleY());
-    Serial.print("\tZ: ");Serial.println(mpu.getAngleZ());
-    Serial.println(F("=====================================================\n"));
+    // Aceleraciones
+    Serial.print(accelX, 3);
+    Serial.print("\t\t");
+    Serial.print(accelY, 3);
+    Serial.print("\t\t");
+    Serial.print(accelZ, 3);
+    Serial.print("\t| ");
+    
+    // Velocidades angulares
+    Serial.print(gyroX, 2);
+    Serial.print("\t\t");
+    Serial.print(gyroY, 2);
+    Serial.print("\t\t");
+    Serial.print(gyroZ, 2);
+    
+    // Indicadores de estado
+    if (enMovimiento) {
+      Serial.print("\t[MOV]");
+    }
+    if (rotacionRapida) {
+      Serial.print("\t[ROT]");
+    }
+    
+    Serial.println();
     timer = millis();
   }
 
