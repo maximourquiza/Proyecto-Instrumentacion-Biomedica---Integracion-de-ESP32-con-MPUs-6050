@@ -4,7 +4,6 @@
  * - Sensor Tibia: Pin AD0 conectado a 3.3V (Dirección 0x69)
  * - Ambos sensores comparten pines SDA (GPIO 21) y SCL (GPIO 22)
  */
-
 #include "Wire.h"
 #include <MPU6050_light.h>
 
@@ -20,16 +19,12 @@ void setup() {
   Wire.begin();
   
   // 2. Configuración del Sensor FEMUR (0x68)
-  // No hace falta setAddress porque 0x68 es el default, pero lo ponemos para ser explícitos
-  // Si tu librería es muy antigua y no tiene setAddress, el default funcionará para el fémur.
-  // mpuFemur.setAddress(0x68); 
   
   byte statusFemur = mpuFemur.begin();
   Serial.print(F("Estado MPU Fémur (0x68): "));
   Serial.println(statusFemur);
   
   // 3. Configuración del Sensor TIBIA (0x69)
-  // Esta función es vital: le dice al objeto que busque en la dirección alternativa
   mpuTibia.setAddress(0x69); 
   
   byte statusTibia = mpuTibia.begin();
@@ -43,7 +38,7 @@ void setup() {
   }
   
   // 4. Calibración
-  // IMPORTANTE: Los sensores deben estar absolutamente quietos y planos durante esto.
+  // Los sensores deben estar absolutamente quietos y planos
   Serial.println(F("Calibrando offsets... NO MOVER LOS SENSORES"));
   delay(1000);
   
@@ -78,7 +73,6 @@ void loop() {
     float anguloTibiaZ = mpuTibia.getAngleZ();
 
     // Visualización por Serial
-    // Formato: FémurX [tab] TibiaX [tab] | FémurY [tab] TibiaY
     Serial.print(anguloFemurX, 1);
     Serial.print("\t\t");
     Serial.print(anguloTibiaX, 1);
