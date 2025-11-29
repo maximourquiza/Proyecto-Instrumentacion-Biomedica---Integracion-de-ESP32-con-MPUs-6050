@@ -1,20 +1,17 @@
-/* Get all possible data from MPU6050
- * Accelerometer values are given as multiple of the gravity [1g = 9.81 m/s²]
- * Gyro values are given in deg/s
- * Angles are given in degrees
- * Note that X and Y are tilt angles and not pitch/roll.
- *
- * License: MIT
+/* Proyecto Instrumentación Biomédica - Lectura Dual MPU6050 (Fémur y Tibia)
+ * * Configuración de Hardware:
+ * - Sensor Fémur: Pin AD0 conectado a GND (Dirección 0x68)
+ * - Sensor Tibia: Pin AD0 conectado a 3.3V (Dirección 0x69)
+ * - Ambos sensores comparten pines SDA (GPIO 21) y SCL (GPIO 22)
  */
 
 #include "Wire.h"
 #include <MPU6050_light.h>
 
-MPU6050 mpu(Wire);
-
-// Variables para análisis de calidad del filtro
-float gyro_x_raw = 0, gyro_y_raw = 0, gyro_z_raw = 0;
-float accel_x_raw = 0, accel_y_raw = 0, accel_z_raw = 0;
+// 1. Instanciamos dos objetos MPU6050 independientes
+// Ambos utilizan el mismo bus I2C (Wire)
+MPU6050 mpuFemur(Wire);
+MPU6050 mpuTibia(Wire);
 
 unsigned long timer = 0;
 
@@ -22,79 +19,79 @@ void setup() {
   Serial.begin(115200);
   Wire.begin();
   
-  byte status = mpu.begin();
-  Serial.print(F("MPU6050 status: "));
-  Serial.println(status);
-  while(status!=0){ } // stop everything if could not connect to MPU6050
+  // 2. Configuración del Sensor FEMUR (0x68)
+  // No hace falta setAddress porque 0x68 es el default, pero lo ponemos para ser explícitos
+  // Si tu librería es muy antigua y no tiene setAddress, el default funcionará para el fémur.
+  // mpuFemur.setAddress(0x68); 
   
-  Serial.println(F("Calculating offsets, do not move MPU6050"));
-  delay(1000);
-  mpu.calcOffsets(true,true); // gyro and accelero
-  Serial.println("Done!\n");
+  byte statusFemur = mpuFemur.begin();
+  Serial.print(F("Estado MPU Fémur (0x68): "));
+  Serial.println(statusFemur);
+  
+  // 3. Configuración del Sensor TIBIA (0x69)
+  // Esta función es vital: le dice al objeto que busque en la dirección alternativa
+  mpuTibia.setAddress(0x69); 
+  
+  byte statusTibia = mpuTibia.begin();
+  Serial.print(F("Estado MPU Tibia (0x69): "));
+  Serial.println(statusTibia);
 
+  // Verificación de seguridad: detener si alguno falla
+  while(statusFemur != 0 || statusTibia != 0){
+    Serial.println(F("¡Error al conectar sensores! Revisa cables y direcciones AD0."));
+    delay(1000);
+  }
+  
+  // 4. Calibración
+  // IMPORTANTE: Los sensores deben estar absolutamente quietos y planos durante esto.
+  Serial.println(F("Calibrando offsets... NO MOVER LOS SENSORES"));
+  delay(1000);
+  
+  Serial.println(F("Calibrando Fémur..."));
+  mpuFemur.calcOffsets(true, true);
+  
+  Serial.println(F("Calibrando Tibia..."));
+  mpuTibia.calcOffsets(true, true);
+  
+  Serial.println("¡Calibración completada!\n");
+  Serial.println("Fémur X\t\tTibia X\t\t| Fémur Y\tTibia Y"); // Encabezado
+  
   timer = millis();
 }
 
 void loop() {
+  // 5. Actualizar lecturas de ambos sensores
+  // Es necesario llamar a update() en cada ciclo para que el filtro interno funcione
+  mpuFemur.update();
+  mpuTibia.update();
 
-  mpu.update();
-
-  float angleX = mpu.getAngleX();  // Roll - Inclinación lateral
-  float angleY = mpu.getAngleY();  // Pitch - Inclinación adelante/atrás
-  float angleZ = mpu.getAngleZ();  // Yaw - Rotación horizontal (deriva sin magnetómetro)
-
-  // Estos son valores RAW con offsets ya aplicados
-  float accelX = mpu.getAccX();  // Aceleración en X (en g's)
-  float accelY = mpu.getAccY();  // Aceleración en Y (en g's)
-  float accelZ = mpu.getAccZ();  // Aceleración en Z (en g's)
-  
-  float gyroX = mpu.getGyroX();  // Velocidad angular en X (°/s)
-  float gyroY = mpu.getGyroY();  // Velocidad angular en Y (°/s)
-  float gyroZ = mpu.getGyroZ();  // Velocidad angular en Z (°/s)
-
-  // Detectar si el sensor está quieto o en movimiento
-  // Calculamos la magnitud del vector de aceleración
-  float accelMagnitude = sqrt(accelX*accelX + accelY*accelY + accelZ*accelZ);
-  bool enMovimiento = abs(accelMagnitude - 1.0) > 0.15;  // >0.15g de diferencia
-  
-  // Detectar velocidades angulares significativas
-  float gyroMagnitude = sqrt(gyroX*gyroX + gyroY*gyroY + gyroZ*gyroZ);
-  bool rotacionRapida = gyroMagnitude > 30.0;  // >30°/s
-
-  if(millis() - timer > 100){ // print data every second
-    // Ángulos filtrados
-    Serial.print(angleX, 2);
-    Serial.print("\t\t");
-    Serial.print(angleY, 2);
-    Serial.print("\t\t");
-    Serial.print(angleZ, 2);
-    Serial.print("\t| ");
+  if(millis() - timer > 100){ // Imprimir cada 100ms
     
-    // Aceleraciones
-    Serial.print(accelX, 3);
-    Serial.print("\t\t");
-    Serial.print(accelY, 3);
-    Serial.print("\t\t");
-    Serial.print(accelZ, 3);
-    Serial.print("\t| ");
+    // Obtenemos los ángulos de interés (ej. Flexión/Extensión que suele ser el Eje X o Y según montaje)
+    float anguloFemurX = mpuFemur.getAngleX();
+    float anguloTibiaX = mpuTibia.getAngleX();
     
-    // Velocidades angulares
-    Serial.print(gyroX, 2);
+    float anguloFemurY = mpuFemur.getAngleY();
+    float anguloTibiaY = mpuTibia.getAngleY();
+
+    float anguloFemurZ = mpuFemur.getAngleZ();
+    float anguloTibiaZ = mpuTibia.getAngleZ();
+
+    // Visualización por Serial
+    // Formato: FémurX [tab] TibiaX [tab] | FémurY [tab] TibiaY
+    Serial.print(anguloFemurX, 1);
     Serial.print("\t\t");
-    Serial.print(gyroY, 2);
+    Serial.print(anguloTibiaX, 1);
+    Serial.print("\t\t| ");
+    Serial.print(anguloFemurY, 1);
     Serial.print("\t\t");
-    Serial.print(gyroZ, 2);
-    
-    // Indicadores de estado
-    if (enMovimiento) {
-      Serial.print("\t[MOV]");
-    }
-    if (rotacionRapida) {
-      Serial.print("\t[ROT]");
-    }
+    Serial.print(anguloTibiaY, 1);
+    Serial.print("\t\t| ");
+    Serial.print(anguloFemurZ, 1);
+    Serial.print("\t\t");
+    Serial.print(anguloTibiaZ, 1);
     
     Serial.println();
     timer = millis();
   }
-
 }
