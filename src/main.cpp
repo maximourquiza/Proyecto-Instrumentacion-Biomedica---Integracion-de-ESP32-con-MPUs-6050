@@ -7,6 +7,7 @@
 #include "Wire.h"
 #include <MPU6050_light.h>
 #include "BluetoothSerial.h"
+#include <Arduino.h>
 
 BluetoothSerial SerialBT;
 
@@ -112,6 +113,11 @@ void loop() {
       SerialBT.print(flexion, 1);
       SerialBT.print(",");
       SerialBT.println(valgo, 1);
+
+      Serial.print(">Flexion:");
+      Serial.println(flexion, 1);
+      Serial.print(">Valgo:");
+      Serial.println(valgo, 1);
 
       timer = millis();
     }
