@@ -1,31 +1,27 @@
-/* Proyecto Instrumentación Biomédica - Lectura Dual MPU6050 (Fémur y Tibia)
- * * Configuración de Hardware:
- * - Sensor Fémur: Pin AD0 conectado a GND (Dirección 0x68)
- * - Sensor Tibia: Pin AD0 conectado a 3.3V (Dirección 0x69)
- * - Ambos sensores comparten pines SDA (GPIO 21) y SCL (GPIO 22)
- */
+
+
 #include "Wire.h"
 #include <MPU6050_light.h>
 #include "BluetoothSerial.h"
 #include <Arduino.h>
+#include "LowPassFilter.h"
 
 BluetoothSerial SerialBT;
-
-// Definición de pines y objetos
+LowPassFilter lpFlex;
+LowPassFilter lpValgo;
 MPU6050 mpuFemur(Wire);
 MPU6050 mpuTibia(Wire);
 
-// Variables para almacenar la postura neutra
-// Guardamos el ángulo que tienen los sensores cuando el paciente está recto.
-float offsetFlexion = 0;
-float offsetValgo = 0;
+// Offsets para la "Tara" anatómica (cuando el paciente está parado)
+float offFlexFemur = 0, offValgoFemur = 0;
+float offFlexTibia = 0, offValgoTibia = 0;
 
-bool calibrado = false;
+bool calibradoAnatomico = false; // Bandera para saber si ya hicimos la "Tara"
 bool transmitiendo = false;
 
 unsigned long timer = 0;
 
-// --- Normalizar ángulos a -180/180 ---
+// Normalización de ángulos
 float normalizeAngle(float angle) {
   while (angle > 180) angle -= 360;
   while (angle < -180) angle += 360;
@@ -34,31 +30,38 @@ float normalizeAngle(float angle) {
 
 void setup() {
   Serial.begin(115200);
-  SerialBT.begin("IMB_MPU6050_Dual"); // Nombre del dispositivo Bluetooth
-  Serial.println(F(">>> INSTRUMENTACIÓN BIOMÉDICA - LECTURA DUAL MPU6050 <<<"));
+  SerialBT.begin("IMB_MPU6050_Dual"); 
 
-  Wire.begin(); 
-  Wire.setClock(400000); // Configurar I2C a 400kHz
+  Serial.println(F(">>> INICIANDO SISTEMA DUAL <<<"));
   
-  // Inicialización de Sensores
-  // mpuFemur usa dirección 0x68 (AD0 -> GND)
-  // mpuTibia usa dirección 0x69 (AD0 -> 3.3V)
+  Wire.begin(); // Forzamos pines SDA, SCL
+  Wire.setClock(400000); 
+
+  // --- INICIALIZACIÓN DE SENSORES ---
+  
+  // 1. MPU FEMUR (0x68)
   byte status = mpuFemur.begin();
-  Serial.print(F("Fémur status: ")); Serial.println(status);
+  Serial.print(F("Status Femur (0x68): ")); Serial.println(status);
   
-  mpuTibia.setAddress(0x69);
+  // 2. MPU TIBIA (0x69)
+  mpuTibia.setAddress(0x69); 
   status = mpuTibia.begin();
-  Serial.print(F("Tibia status: ")); Serial.println(status);
+  Serial.print(F("Status Tibia (0x69): ")); Serial.println(status);
 
-  Serial.println(F("CALIBRANDO OFFSETS... NO MOVER"));
-  mpuFemur.calcOffsets(true, true);
+  // --- CALIBRACIÓN DE GIROSCOPIOS (HARDWARE) ---
+  Serial.println(F("ATENCION: MANTENER SENSORES PLANOS Y QUIETOS EN LA MESA"));
+  Serial.println(F("Calibrando en 3 segundos..."));
+  delay(3000);
+  
+  Serial.println(F("Calculando Offsets Hardware... NO TOCAR"));
+  mpuFemur.calcOffsets(true, true); // Calibra Gyro y Accel
   mpuTibia.calcOffsets(true, true);
-
-  Serial.println(F("SISTEMA LISTO. Comandos: 'c'=Calibrar, 'i'=Iniciar, 's'=Detener"));
+  
+  Serial.println(F("Hardware Listo. Coloca los sensores en el paciente."));
+  Serial.println(F("Comandos: 'c' (Estando parado para tara), 'i' (Iniciar), 's' (Stop)"));
 }
 
 void loop() {
-  // Actualizar datos de sensores (necesario siempre)
   mpuFemur.update();
   mpuTibia.update();
 
@@ -66,59 +69,74 @@ void loop() {
     char command = (char)SerialBT.read();
 
     switch (command) {
-      case 'c':
-        // 1. Obtenemos los ángulos actuales del sensor
-        offsetFlexion = mpuTibia.getAngleY() - mpuFemur.getAngleY();
-        offsetValgo   = mpuTibia.getAngleX() - mpuFemur.getAngleX();
-        calibrado = true;
-        SerialBT.println("OK: Calibracion Clinica Completada.");
+      case 'c': {
+        SerialBT.println("Calibrando Postura Inicial (Tara)... manténgase quieto.");
+        float sumFF = 0, sumVF = 0, sumFT = 0, sumVT = 0;
+        int n = 100; // 100 muestras
+
+        for(int i=0; i<n; i++) {
+            mpuFemur.update();
+            mpuTibia.update();
+            
+            sumFF += mpuFemur.getAngleY(); 
+            sumVF += mpuFemur.getAngleX();
+            sumFT += mpuTibia.getAngleY(); 
+            sumVT += mpuTibia.getAngleX();
+            
+            delay(5);
+        }
+
+        offFlexFemur = sumFF / n;
+        offValgoFemur = sumVF / n;
+        offFlexTibia = sumFT / n;
+        offValgoTibia = sumVT / n;
+        
+        calibradoAnatomico = true;
+        SerialBT.println("OK: Cero Anatomico Establecido.");
+        Serial.println("Calibracion 'c' exitosa.");
         break;
+      }
 
       case 'i':
-        if (calibrado) {
+        if (calibradoAnatomico) {
           transmitiendo = true;
-          SerialBT.println(F(">>> TRANSMISIÓN INICIADA <<<"));
-          SerialBT.println("Tiempo(ms),Flexion,Valgo"); // Cabecera de datos CSV
-          break;
+          SerialBT.println("TIEMPO,FLEXION,VALGO"); // Header CSV
         } else {
-          SerialBT.println(F("ERROR: Primero calibrar con 'c'"));
-          break;
+          SerialBT.println("ERROR: Presione 'c' primero estando parado.");
         }
+        break;
 
       case 's':
         transmitiendo = false;
-        SerialBT.println(F(">>> TRANSMISIÓN DETENIDA <<<"));
-        break;
-
-      default:
-        SerialBT.println(F("Comando no reconocido. Use 'c', 'i' o 's'."));
+        SerialBT.println("STOP");
         break;
     }
   }
 
-  if (transmitiendo && millis() - timer > 50) { // 20 Hz (Ajustable)
+  // 3. ENVÍO DE DATOS Fm = 100 Hz
+  if (transmitiendo && millis() - timer > 10) {
       
-      float fP = mpuFemur.getAngleY();
-      float tP = mpuTibia.getAngleY();
-      float fR = mpuFemur.getAngleX();
-      float tR = mpuTibia.getAngleX();
+      // Calculamos ángulos restando el offset inicial (Tara)
+      float fP = mpuFemur.getAngleY() - offFlexFemur;
+      float tP = mpuTibia.getAngleY() - offFlexTibia;
+      
+      float fR = mpuFemur.getAngleX() - offValgoFemur;
+      float tR = mpuTibia.getAngleX() - offValgoTibia;
 
-      float flexion = normalizeAngle((tP - fP) - offsetFlexion);
-      float valgo   = normalizeAngle((tR - fR) - offsetValgo);
+      // Calculamos la diferencia entre Tibia y Fémur
+      float flexion = normalizeAngle(fP - tP);
+      float valgo   = normalizeAngle(fR - tR);
 
-      // Formato CSV (Comma Separated Values)
-      // Esto permite guardar el log en el cel y abrirlo directo en Excel/Matlab
+      float lpf_flex = lpFlex.filter(flexion);
+      float lpf_valgo = lpValgo.filter(valgo);
+
+      // --- ENVIAR A BLUETOOTH (Formato CSV para App/Excel) ---
       SerialBT.print(millis());
       SerialBT.print(",");
-      SerialBT.print(flexion, 1);
+      SerialBT.print(lpf_flex, 1);
       SerialBT.print(",");
-      SerialBT.println(valgo, 1);
-
-      Serial.print(">Flexion:");
-      Serial.println(flexion, 1);
-      Serial.print(">Valgo:");
-      Serial.println(valgo, 1);
+      SerialBT.println(lpf_valgo, 1);
 
       timer = millis();
-    }
+  }
 }
